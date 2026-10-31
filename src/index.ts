@@ -3,7 +3,7 @@
  * https://mailtester.ninja/api/
  */
 
-export const VERSION = '1.0.0';
+export const VERSION = '1.1.0';
 export const DEFAULT_BASE_URL = 'https://happy.mailtester.ninja';
 /** Keyless free tier: 10 checks a day per IP, one request every 30 seconds. */
 export const FREE_KEY = 'free';
@@ -29,6 +29,38 @@ export interface VerificationResult {
   limit?: number;
   /** Requests made with the key over the last 10 seconds. */
   rate?: number;
+}
+
+/** Result of a Finder API search (`find`). Check `found` first. */
+export interface FindResult {
+  /** `ok` found, `ko` not found, `mb` uncertain (catch-all domain, personal email provider, server not checked). */
+  code: Verdict;
+  /** Accepted, Rejected, Catch-All, Limited, No MX, Disposable, SPAM Block, Timeout, Webmail... */
+  message: string;
+  /** True when the mail server accepted one of the formats. */
+  found: boolean;
+  /** The address found, otherwise null. */
+  email: string | null;
+  /** Not verified: on a catch-all domain the most common format, for a full mailbox (Limited) that address. */
+  guess: string | null;
+  first: string;
+  last: string;
+  /** The normalised domain that was searched. */
+  domain: string;
+  /** Mail server used for the search. */
+  mx: string;
+  /** Address formats tested, each one counted as a verification, even when nothing is found. */
+  permutations: number;
+  /** Simultaneous connections used by the key. */
+  connections?: number;
+  /** Daily limit of the key. */
+  limit?: number;
+  /** Verifications made with the key over the last 10 seconds, permutations included. */
+  rate?: number;
+  /** Seconds taken by the search. */
+  duration?: number;
+  /** Why nothing was found, in plain English. Null when found. */
+  reason: string | null;
 }
 
 export interface MailTesterOptions {
@@ -127,9 +159,7 @@ export class MailTester {
     return this.key === FREE_KEY || this.key.startsWith('mtf_');
   }
 
-  /** Verify one address. Resolves to a verdict, rejects with a MailTesterError when there is none. */
-  async verify(email: string): Promise<VerificationResult> {
-    const url = `${this.baseUrl}/ninja?email=${encodeURIComponent(email.trim())}&key=${encodeURIComponent(this.key)}`;
+  private async request(url: string): Promise<{ res: Response; text: string; body?: Record<string, unknown> }> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     let res: Response;
@@ -142,13 +172,43 @@ export class MailTester {
       clearTimeout(timer);
     }
     const text = await res.text();
-    const body = parseJson(text);
+    return { res, text, body: parseJson(text) };
+  }
+
+  /** Verify one address. Resolves to a verdict, rejects with a MailTesterError when there is none. */
+  async verify(email: string): Promise<VerificationResult> {
+    const { res, text, body } = await this.request(`${this.baseUrl}/ninja?email=${encodeURIComponent(email.trim())}&key=${encodeURIComponent(this.key)}`);
     const message = typeof body?.message === 'string' ? body.message : text.trim();
     if (res.status === 429) throw new MailTesterRateLimitError(message, retryAfter(message));
     if (!res.ok) throw new MailTesterError(message || `HTTP ${res.status}`, res.status);
     if (!body) throw new MailTesterError('Unexpected response from the API', res.status);
     if (body.code === '--') throw new MailTesterKeyError(message, res.status);
     return body as unknown as VerificationResult;
+  }
+
+  /**
+   * Find a work email address from a first name, a last name and a company domain (Finder API, paid key).
+   * The API tests the most common formats one by one (first.last, flast, first, firstlast, first_last, f.last)
+   * and returns the first address the mail server accepts. Each format tested counts as one verification.
+   * Resolves to a FindResult (check `found`), rejects with a MailTesterError when the search did not run.
+   */
+  async find(first: string, last: string, domain: string): Promise<FindResult> {
+    if (this.isFree) {
+      throw new MailTesterKeyError('The Finder API needs a paid key: https://mailtester.ninja/verify-emails-unlimited/', 403);
+    }
+    const qs = new URLSearchParams({ first: first.trim(), last: last.trim(), domain: domain.trim(), key: this.key });
+    const { res, text, body } = await this.request(`${this.baseUrl}/find?${qs}`);
+    const reason = typeof body?.reason === 'string' && body.reason ? body.reason : undefined;
+    const message = reason ?? (typeof body?.message === 'string' ? body.message : text.trim());
+    if (res.status === 429) {
+      const wait = Number(res.headers.get('retry-after'));
+      throw new MailTesterRateLimitError(message, Number.isFinite(wait) && wait > 0 ? wait : undefined);
+    }
+    if (res.status === 403 && body) throw new MailTesterKeyError(message, 403);
+    if (!res.ok) throw new MailTesterError(message || `HTTP ${res.status}`, res.status);
+    if (!body) throw new MailTesterError('Unexpected response from the API', res.status);
+    if (body.code === '--') throw new MailTesterKeyError(message, res.status);
+    return body as unknown as FindResult;
   }
 
   /** True only when the address is clearly valid and deliverable (`code` "ok"). */

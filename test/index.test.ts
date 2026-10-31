@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { MailTester, MailTesterError, MailTesterKeyError, MailTesterRateLimitError } from '../src/index';
 
-type Reply = { status: number; body: string };
+type Reply = { status: number; body: string; headers?: Record<string, string> };
 
 function fakeFetch(replies: Reply[], calls: { url: string; init?: RequestInit }[] = []) {
   let i = 0;
   const f = async (url: string | URL | Request, init?: RequestInit) => {
     calls.push({ url: String(url), init });
     const r = replies[Math.min(i++, replies.length - 1)];
-    return new Response(r.body, { status: r.status, headers: { 'Content-Type': 'application/json' } });
+    return new Response(r.body, { status: r.status, headers: { 'Content-Type': 'application/json', ...r.headers } });
   };
   return f as unknown as typeof fetch;
 }
@@ -113,4 +113,49 @@ describe.runIf(process.env.MAILTESTER_LIVE === '1')('live API (free tier)', () =
     const r = await new MailTester({ key: process.env.MAILTESTER_KEY || 'free' }).verify('info@apple.com');
     expect(['ok', 'ko', 'mb']).toContain(r.code);
   }, 90000);
+});
+
+const found = { code: 'ok', message: 'Accepted', found: true, email: 'jane.doe@example.com', guess: null, first: 'Jane', last: 'Doe', domain: 'example.com', mx: 'mx.example.com', permutations: 1, connections: 1, limit: 100000, rate: 1, duration: 1.2, reason: null };
+
+describe('MailTester.find', () => {
+  it('calls /find with first, last, domain and key and returns the result', async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const mt = new MailTester({ key: 'sub_123', fetch: fakeFetch([{ status: 200, body: JSON.stringify(found) }], calls) });
+    const r = await mt.find(' Jean-Pierre ', 'De La Tour', 'example.com');
+    expect(r.found).toBe(true);
+    expect(r.email).toBe('jane.doe@example.com');
+    expect(r.permutations).toBe(1);
+    expect(calls[0].url).toBe('https://happy.mailtester.ninja/find?first=Jean-Pierre&last=De+La+Tour&domain=example.com&key=sub_123');
+  });
+
+  it('returns a result without address when nothing is found', async () => {
+    const body = JSON.stringify({ ...found, code: 'mb', message: 'Catch-All', found: false, email: null, guess: 'jane.doe@example.com', reason: 'The domain accepts every address (catch-all).' });
+    const r = await new MailTester({ key: 'sub_1', fetch: fakeFetch([{ status: 200, body }]) }).find('Jane', 'Doe', 'example.com');
+    expect(r.found).toBe(false);
+    expect(r.guess).toBe('jane.doe@example.com');
+  });
+
+  it('refuses a free key without calling the API', async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const err = await new MailTester({ key: 'free', fetch: fakeFetch([], calls) }).find('Jane', 'Doe', 'example.com').catch((e) => e);
+    expect(err).toBeInstanceOf(MailTesterKeyError);
+    expect(calls.length).toBe(0);
+  });
+
+  it('throws MailTesterRateLimitError with Retry-After on a 429', async () => {
+    const body = JSON.stringify({ ...found, code: '--', message: 'Too Many Requests', found: false, email: null, permutations: 0, reason: 'The key is at its maximum rate. Retry in 10 seconds.' });
+    const mt = new MailTester({ key: 'sub_1', fetch: fakeFetch([{ status: 429, body, headers: { 'Retry-After': '10' } }]) });
+    const err = await mt.find('Jane', 'Doe', 'example.com').catch((e) => e);
+    expect(err).toBeInstanceOf(MailTesterRateLimitError);
+    expect(err.retryAfterSeconds).toBe(10);
+    expect(err.message).toContain('maximum rate');
+  });
+
+  it('throws MailTesterError with the reason on invalid parameters', async () => {
+    const body = JSON.stringify({ ...found, code: '--', message: 'Invalid parameters', found: false, email: null, permutations: 0, reason: 'Send first, last and domain.' });
+    const err = await new MailTester({ key: 'sub_1', fetch: fakeFetch([{ status: 400, body }]) }).find('', 'Doe', 'example.com').catch((e) => e);
+    expect(err).toBeInstanceOf(MailTesterError);
+    expect(err.status).toBe(400);
+    expect(err.message).toBe('Send first, last and domain.');
+  });
 });

@@ -1,6 +1,6 @@
 {
   "name": "@mailtester-ninja/client",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Official client for the MailTester Ninja email verification API: check in real time if an email address is valid and deliverable.",
   "keywords": [
     "email",

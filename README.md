@@ -1,6 +1,6 @@
 # MailTester Ninja for JavaScript and TypeScript
 
-Official client for the [MailTester Ninja](https://mailtester.ninja) email verification API. Check in real time whether an email address is valid and deliverable: each address is checked against the recipient's mail server, and nothing is stored.
+Official client for the [MailTester Ninja](https://mailtester.ninja) email verification API. Check in real time whether an email address is valid and deliverable: each address is checked against the recipient's mail server, and nothing is stored. With a paid key, `find` also looks up a person's work email from their name and company domain.
 
 - Zero dependencies, typed, ESM and CommonJS
 - Node.js 18+, Deno, Bun and browsers (CORS is open)
@@ -48,14 +48,30 @@ for await (const { email, result, error } of mt.verifyMany(['info@apple.com', 's
 }
 ```
 
+## Find a work email (paid key)
+
+`find` calls the Finder API: it tests the most common address formats one by one (first.last, flast, first, firstlast, first_last, f.last) and returns the first one the mail server accepts.
+
+```js
+const r = await mt.find('Jean-Pierre', 'De La Tour', 'example.com');
+if (r.found) console.log(r.email);       // an address the mail server just accepted
+else console.log(r.message, r.guess);    // e.g. "Catch-All" and the most common format
+console.log(r.permutations);             // formats tested, each one counted as a verification
+```
+
+- Each format tested counts as one verification against your daily limit, even when nothing is found. The search paces itself within the rate of your key.
+- On a catch-all domain nothing can be confirmed: `found` is `false` and `guess` holds the most common format.
+- Personal email providers such as gmail.com are not searched (`message` is `Webmail`).
+- A free key is refused with `MailTesterKeyError`; over the rate of your key, `MailTesterRateLimitError` carries `retryAfterSeconds`.
+
 ## Errors
 
 An error is never a verdict: do not drop an address because of it.
 
 | Error | When |
 |-------|------|
-| `MailTesterKeyError` | The key is invalid or disabled. |
-| `MailTesterRateLimitError` | A limit was reached (HTTP 429). `retryAfterSeconds` is set on the free tier. |
+| `MailTesterKeyError` | The key is invalid or disabled, or `find` was called with a free key. |
+| `MailTesterRateLimitError` | A limit was reached (HTTP 429). `retryAfterSeconds` is set on the free tier and by `find`. |
 | `MailTesterError` | Any other HTTP or network error (`status` when there is one). |
 
 ## Keys and limits
