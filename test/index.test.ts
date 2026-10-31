@@ -115,7 +115,7 @@ describe.runIf(process.env.MAILTESTER_LIVE === '1')('live API (free tier)', () =
   }, 90000);
 });
 
-const found = { code: 'ok', message: 'Accepted', found: true, email: 'jane.doe@example.com', guess: null, first: 'Jane', last: 'Doe', domain: 'example.com', mx: 'mx.example.com', permutations: 1, connections: 1, limit: 100000, rate: 1, duration: 1.2, reason: null };
+const found = { code: 'ok', message: 'Accepted', found: true, email: 'jane.doe@example.com', format: 'first.last', confidence: 'high', guess: null, first: 'Jane', last: 'Doe', domain: 'example.com', mx: 'mx.example.com', permutations: 1, tested: [{ email: 'jane.doe@example.com', code: 'ok', message: 'Accepted' }], connections: 1, limit: 100000, rate: 1, duration: 1.2, reason: null };
 
 describe('MailTester.find', () => {
   it('calls /find with first, last, domain and key and returns the result', async () => {
@@ -125,6 +125,9 @@ describe('MailTester.find', () => {
     expect(r.found).toBe(true);
     expect(r.email).toBe('jane.doe@example.com');
     expect(r.permutations).toBe(1);
+    expect(r.format).toBe('first.last');
+    expect(r.confidence).toBe('high');
+    expect(r.tested).toEqual([{ email: 'jane.doe@example.com', code: 'ok', message: 'Accepted' }]);
     expect(calls[0].url).toBe('https://happy.mailtester.ninja/find?first=Jean-Pierre&last=De+La+Tour&domain=example.com&key=sub_123');
   });
 

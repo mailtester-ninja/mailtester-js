@@ -41,6 +41,10 @@ export interface FindResult {
   found: boolean;
   /** The address found, otherwise null. */
   email: string | null;
+  /** Pattern of the returned address (email, or guess when not found): first.last, flast, first, firstlast, first_last or f.last. */
+  format: string | null;
+  /** For an address found: `high` (first and last name in it), `medium` (an initial, a namesake may share it), `low` (first name only). */
+  confidence: 'high' | 'medium' | 'low' | null;
   /** Not verified: on a catch-all domain the most common format, for a full mailbox (Limited) that address. */
   guess: string | null;
   first: string;
@@ -51,6 +55,8 @@ export interface FindResult {
   mx: string;
   /** Address formats tested, each one counted as a verification, even when nothing is found. */
   permutations: number;
+  /** Every address tested, in order, with its verdict. */
+  tested: { email: string; code: string; message: string }[];
   /** Simultaneous connections used by the key. */
   connections?: number;
   /** Daily limit of the key. */
